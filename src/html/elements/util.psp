@@ -1,0 +1,157 @@
+<%@ include file="/elements/conf_parser.psp" %>
+<%!
+	//control the globals and the redis db connection
+	import redis_client;
+	//#include "conf_parser.pike"
+	
+	int first = 1, connected = 0, page_num = 0;
+	Redis db;
+	//IMPORTANT. I dev on the same redis db for all of my projects so I have to set it to another index
+	int db_index = 2;
+	
+	string config_location = "/var/www/greenit/html/elements/defaults.conf";
+	string db_prefix = "greenit:";
+	string format_notes = "Notes on formatting:<br><br>for videos, take the youtube video id (no ?=) place it between a [video]id_here[/video] tag.<br><br>for images, only imgur works. Copy an imgur image location and place everything after the imgur domain name between [img]image.png[/img]<br><br>For bold, underline, and italics, follow the same ide of opening and closing tags, but with [b][/b], [i],[/i], and [u],[/u]<br><br>";
+	
+	//=========================
+	
+	string format_username(string username)
+	{
+		string fina_strl = filter_string(username);
+		//return lower_case(fina_strl);
+		return fina_strl;
+	}
+	
+	string filter_string(string old)
+	{
+		//prevent XSS
+		string fina_strl;
+		fina_strl = replace(old, "<", "&lt;");
+		fina_strl = replace(fina_strl, ">", "&gt;");
+		
+		return fina_strl;
+	}
+	
+	string username_from_token(string token)
+	{
+		if(token)
+		{
+			string key = db->get(db_prefix + "token:" + replace(token, "\r\n", ""));
+			string response;
+			
+			if(key)
+				response = db->hget(replace(key, "\r\n", ""), "username");
+			
+			if(response)
+				return replace(response, "\r\n", "");
+			else
+				return "";
+		}
+		return "";
+	}
+	
+	int user_logged_in(string token)
+	{
+		return strlen(username_from_token(token));
+	}
+	
+	int is_clean_sg_string(string subgreenit)
+	{
+		if(strlen(subgreenit) > 30 || strlen(subgreenit) < 2)
+			return 0;
+		
+		for(int i = 0; i < strlen(subgreenit); i++)//make sure only alpha
+		{
+			if((subgreenit[i] < 65 || subgreenit[i] > 90) && (subgreenit[i] < 97 || subgreenit[i] > 122))
+				return 0;
+		}
+		
+		return 1;
+	}
+	
+	string trim_uri(string query)
+	{
+		array(string) temp = query / "?";
+		return temp[0];
+	}
+	
+	mixed get_hash_value(array(mixed) hash, mixed value)
+	{
+		if(hash)
+		{
+			
+			for(int i = 0; i < sizeof(hash); i++)
+			{
+				write("woohoo %s\n", (string)hash[i]);
+				
+				if(hash == value)
+					return hash[i + 1];
+			}
+		}
+		else
+			write("fuck\n");
+		
+		return 0;
+	}
+	
+	//for whatever reason, this pike redis client corrupts things
+	string decorrupt(string input)
+	{
+		return replace(replace(input, "\r", ""), "\n", "");
+	}
+	
+	string remove_crlf(string input)
+	{
+		return replace(input, "\r\n", "");
+	}
+	
+	string create_id(string identifier)
+	{
+		return (string)gethrtime() + identifier + (string)random(100000);
+	}
+	
+%>
+
+<%
+	//manage the globals
+	if(first)
+	{
+		write("connecting to redis db\n");
+		db = Redis(0, 0, "/var/run/redis/redis.sock");
+		db->connect();
+		
+		if(db->ping() && db->select(db_index))
+		{
+			connected++;
+			write("redis db conection successful\n");
+		}
+		else
+			write("unable to connecto to redis db\n");
+		
+		// make sure the db is set up with everything it needs
+		if(!db->exists(db_prefix + "variable:setup"))
+		{
+			string default_subgreenit_name = config_get(config_location, "default_subgreenit", "name");
+			string default_subgreenit_sidebar = config_get(config_location, "default_subgreenit", "sidebar_text");
+			
+			
+			//add the default subgreenit
+			db->hmset(db_prefix + "subgreenit:" + default_subgreenit_name, "name", default_subgreenit_name, "creator","g", "about", default_subgreenit_sidebar, "date_created", Protocols.HTTP.Server.http_date(time()));
+			db->lpush(db_prefix + "variable:subgreenits", db_prefix + "subgreenit:" + default_subgreenit_name);
+			
+			//add the default posts per page
+			db->set(db_prefix + "variable:ppp",config_get(config_location, "general", "subgreenit_post_per_page"));
+			
+			
+			//at the very end, ad dthe setup key
+			db->set(db_prefix + "variable:setup", default_subgreenit_name);
+			write("the defaults were setup\n");
+		}
+		
+		//==================
+		first = 0;
+	}
+	//this gets corrupted for whatever reason
+	page_num = (int)request->variables->p;
+	//write("hey " + page_num + "\n");
+%>

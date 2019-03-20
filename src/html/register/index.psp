@@ -1,0 +1,84 @@
+<%! import Crypto; %>
+<%@ include file="/elements/header.psp" %>
+	<div class="feed">
+	
+		<h1>Register</h1>
+		
+		<%
+			if(request->method == "POST")
+			{
+				int can_continue = 1;
+				//register the account and give feedback
+				string username = format_username(request->variables->username);
+				
+				if(strlen(username) > 50 || strlen(username) <= 2 || !is_clean_username_string(username))
+				{
+					out += "username not usable. Please keep it under 50 characters and above 2 characters. Also, only alphanumeric characters allowed";
+					can_continue--;
+				}
+				
+				//make sure the username isnt already used
+				string user_key = db_prefix + "user:" + username;
+				
+				if(db->exists(user_key) && can_continue)
+				{
+					out+="user already exists";
+					can_continue--;
+				}
+				
+				//verify passwords arent too long
+				if((strlen(request->variables->password) > 80 || strlen(request->variables->password) <= 5) && can_continue)
+				{
+					out += "password too long/short. Please keep it under 80 characters and above 5 characters";
+					can_continue--;
+				}
+				
+				//verify passwords are the exact same
+				if(request->variables->password != request->variables->vpassword && can_continue)
+				{
+					out += "passwords do not match";
+					can_continue--;
+				}
+				
+				//if all else is good then create a hash and add the user to the db
+				if(can_continue)
+				{
+					string response, token = MIME.encode(Crypto.Random.random_string(20), "base64");
+					string hash_pw = Crypto.Password.hash(request->variables->password);
+					
+					
+					//TODO remove token from users hash
+					response = db->hmset(user_key, "username", username, "password", hash_pw, "token", token, "date_created", time());
+					
+					db->set("greenit:token:" + token, user_key);
+					
+					//if this is the first user, add them to the admin list
+					if((int)db->llen(db_prefix + "variable:admins") == 0)
+						db->lpush(db_prefix + "variable:admins", user_key);
+					
+					
+					if(search(response, "OK "))
+						out += "added user. Log into your account on the login page";
+					else
+						out += "unable to create user for whatever reason: \"" + response + "\"";
+				}
+			}
+		%>
+		<form action="/register/" method="post">
+			Username:<br>
+			<input type="text" name="username"><br>
+			Password:<br>
+			<input type="password" name="password"><br>
+			Verify password:<br>
+			<input type="password" name="vpassword"><br><br>
+			<input type="submit" value="submit" id="submit">
+		</form>
+		
+		(please don't use a password you use anywhere else. The salt and hashes are stored right next to eachother so if anyone were to be able to get into the redis db used, it would be really easy to compare hashes to get your password if its common enough)
+		
+	</div>
+	
+	<%@ include file="/elements/controls.psp" %>
+	
+</div>
+<%@ include file="/elements/footer.psp" %>

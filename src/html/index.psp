@@ -1,0 +1,9 @@
+<%@ include file="/elements/header.psp" %>
+	<div class="feed">
+		<h1>impossible page</h1>
+	</div>
+	
+	<%@ include file="/elements/controls.psp" %>
+	
+</div>
+<%@ include file="/elements/footer.psp" %>

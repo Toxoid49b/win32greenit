@@ -1,0 +1,145 @@
+	<div class="controls">
+		Controls:
+		<hr></hr>
+		<a href="/account/<%=username_from_token(request->cookies->token) %>"><% if(user_logged_in(request->cookies->token)) %>My account<% else %><% %></a><% if(user_logged_in(request->cookies->token)) %><br><br><% else %><% %>
+		<% if(user_logged_in(request->cookies->token)) %>
+		<a href="/logout">Log out</a><br><br>
+		<% else %>
+		<a href="/login">Log in/register</a><br><br>
+		<% %>
+		<a href="/sg/create">Create subgreenit</a><br><br>
+		<a href="/sg">What is a subgreenit</a><br><br>
+		<a href="/formatting">Text formatting</a><br><br>
+		
+		<%
+			if(in_subgreenit(request->not_query))
+			{
+				bool user_is_admin = false;
+				out += banner_current_subgreenit(request->not_query) + ":<hr></hr>";
+				if(user_logged_in(request->cookies->token))
+					out += "<input type=\"button\" onclick=\"location.href=\'/g/" + current_subgreenit(request->not_query) + "/create/\'\" value=\"Create Post\" /><br><br>";
+				
+				out += format_parse(db->hget(db_prefix + "subgreenit:" + current_subgreenit(request->not_query), "about")) + "<hr></hr>";
+				
+				//list the moderators
+				out += "<center>subgreenit moderator(s) -</center><br>";
+				
+				
+				string mod_key = db_prefix + "variable:" + current_subgreenit(request->not_query) + ":moderators";
+				
+				array(string) moderators = db->lrange(mod_key, 0, -1);
+				
+				foreach(moderators, string user)
+				{
+					out += user + "<br>";
+				}
+				
+				out += "<br><br>";
+				
+				/*
+				string key_sg = db_prefix + "subgreenit:" + current_subgreenit(request->not_query);
+				
+				if(subgreenit_exists(request->not_query))
+					if(username_from_token(request->cookies->token) == replace(db->hget(key_sg, "creator"), "\r\n", "") || user_is_moderator(request->cookies->token, request->not_query) || user_is_admin(request->cookies->token))
+						out += "<hr></hr><h4>control feedback</h4>";
+				*/
+				
+				//handle the css uploading and about test
+				array(string) temp = request->not_query / "/";
+				
+				
+				if(request->method == "POST" && user_logged_in(request->cookies->token) && !sizeof(temp[3])) //allow the creator to change the about text
+				{
+					string key = db_prefix + "subgreenit:" + current_subgreenit(request->not_query);
+					
+					
+					//check if the user is an admin
+					foreach(db->lrange(db_prefix + "variable:admins", 0, -1), string key)
+					{
+						array(string) key_data = replace(key, "\r", "") / ":";
+						
+						//write("heeyyy %s\n", key_data[2]);
+						
+						if(key_data[2] == username_from_token(request->cookies->token))
+							user_is_admin = true;
+					}
+					
+					if(username_from_token(request->cookies->token) == replace(db->hget(key, "creator"), "\r\n", "") || user_is_admin)
+					{
+						if(request->variables->about && !request->variables->modadd)
+						{
+							if(strlen(request->variables->about) > 2000)
+								out += "<font color=\"red\">about string too long. Keep it under 2000 characters</font>";
+							else if(!request->variables->modadd)
+							{
+								//db->hset(key, "about", safe_about_string(request->variables->about));
+								db->hset(key, "about", request->variables->about);
+								out += "updated about text. go to subgreenit home to see changes";
+							}
+						}
+						
+						
+						if(request->variables->modadd && !request->variables->about)
+						{
+							if(user_name_is_moderator(request->variables->modadd, request->not_query))
+								out += "<font color=\"red\">user is already a moderator</font>";
+							else
+							{
+								string user_key = db_prefix + "user:" +( (request->variables->modadd[0..0] == "!") ? request->variables->modadd[1..] : request->variables->modadd);
+								
+								if(!db->exists(user_key))
+									out += "<font color=\"red\">user does not exist</font>";
+								else
+								{
+									if(request->variables->modadd[0..0] == "!") //removing the user
+									{
+										db->lrem(db_prefix + "variable:" + current_subgreenit(request->not_query) + ":moderators", 0, request->variables->modadd[1..]);
+										out += "removing user " +  request->variables->modadd + " from moderator list";
+									}
+									else
+									{
+										db->rpush(db_prefix + "variable:" + current_subgreenit(request->not_query) + ":moderators", request->variables->modadd);
+										out += "added user " +  request->variables->modadd[1..] + " to moderator list";
+									}
+								}
+							}
+						}
+						
+					}
+					else
+						out += "invalid permission";
+				}
+				
+			}
+		%>
+		<%
+			//display the text box
+			
+			string key = db_prefix + "subgreenit:" + current_subgreenit(request->not_query);
+			
+			if(subgreenit_exists(request->not_query))
+				if(username_from_token(request->cookies->token) == replace(db->hget(key, "creator"), "\r\n", "") || user_is_moderator(request->cookies->token, request->not_query) || user_is_admin(request->cookies->token))
+				{
+					out += "<hr></hr><h3>subgreenit settings -</h3><br>";
+					
+					out += "<form action=\"/g/" + current_subgreenit(request->not_query) + "/\" method=\"post\">\n\
+						Subgreenit about text:<br>\n\
+						<textarea name=\"about\" cols=\"30\" rows=\"10\">" + replace(replace(db->hget(db_prefix + "subgreenit:" + current_subgreenit(request->not_query), "about"), "</t", "</tt"), "</T", "/TT") + "</textarea><br>\n\
+						<input type=\"submit\" value=\"submit\" id=\"submit\">\n\
+					</form><br>";
+					
+					//the add user to moderate button
+					
+					out += "<form action=\"/g/" + current_subgreenit(request->not_query) + "/\" method=\"post\">\n\
+						Add/remove user to moderator list<br>(prepend '!' to beginning of username to remove):<br>\n\
+						<input type=\"text\" name=\"modadd\"><br>\n\
+						<input type=\"submit\" value=\"submit\" id=\"submit\"><br>\n\
+					</form><br><br>";
+					
+					//the css setting button
+					out += "<input type=\"button\" onclick=\"location.href=\'/g/" + current_subgreenit(request->not_query) + "/css/\'\" value=\"Modify CSS\" /><br><br>";
+				}
+			
+		%>
+		<!-- heyy -->
+	</div><!-- hey -->

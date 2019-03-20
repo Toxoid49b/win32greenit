@@ -1,0 +1,42 @@
+<%@ include file="/elements/header.psp" %>
+	<div class="feed">
+	
+		<h1>Create subgreenit</h1>
+		
+		<%
+			if(request->method == "POST")
+			{
+				if(user_logged_in(request->cookies->token))
+				{
+					if(is_clean_sg_string(request->variables->name))
+					{
+						if(!db->exists(db_prefix + "subgreenit:" + request->variables->name))
+						{
+							db->hmset(db_prefix + "subgreenit:" + request->variables->name, "name", request->variables->name, "creator", username_from_token(request->cookies->token), "about", "", "date_created", time(), "css", "");
+							db->rpush(db_prefix + "variable:subgreenits",db_prefix + "subgreenit:" + request->variables->name);
+							db->lpush(db_prefix + "variable:" + request->variables->name + ":moderators", username_from_token(request->cookies->token));
+							out += "created subgreenit at <a href=\"/g/" + request->variables->name + "/\">/g/" + request->variables->name + "/</a>";
+						}
+						else
+							out += "subgreenit already exists";
+					}
+					else
+						out += "subgreenit name needs to be greater than 2 characters and less than 30 characters long. Also, only A-z allowed";
+				}
+				else
+					out += "you need an account to do this";
+			}
+		%>
+		<form action="/sg/create/" method="post">
+			Subgreenit name:<br>
+			<input type="text" name="name"><br><br>
+			<input type="submit" value="submit" id="submit">
+		</form>
+		
+		(please dont spam this)
+	</div>
+	
+	<%@ include file="/elements/controls.psp" %>
+	
+</div>
+<%@ include file="/elements/footer.psp" %>

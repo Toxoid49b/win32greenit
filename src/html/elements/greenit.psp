@@ -1,0 +1,680 @@
+<%!
+	string get_subgreenit_posts(string sg, string location, int page)
+	{
+		string final_str = "", posts_key = db_prefix + "variable:" + sg + ":posts";
+		array(string) posts;
+		int db_page = 0, db_end = 0, total = db->llen(posts_key);
+		int posts_per_page = (int)db->get(db_prefix + "variable:ppp");
+		
+		db_page = page * posts_per_page;
+		db_end = db_page + posts_per_page;
+		
+		//write("yo " + page * posts_per_page + " " + total + "\n");
+		
+		if(db_page <= total && total)
+		{
+			if(db_end > total)
+				db_end = total - db_page + db_page;
+			
+			posts = db->lrange(posts_key, db_page, db_end);
+			//TODO: use location like new to sort posts
+			
+			
+			//new only
+			
+			foreach(posts, string key)
+			{
+				//WOW this is slow
+				//int timetaken = gethrtime(), finaltime = 0;
+				final_str += create_post_element(key);
+				//finaltime = gethrtime();
+				//write("time taken " + ((finaltime - timetaken)/1000) + "\n");
+			}
+			
+			
+		}
+		else if(!total)
+			final_str += "<h1>No posts. Feel free to create one</h1>";
+		else
+			final_str += "<h1>No content</h1>";
+		
+		
+		return final_str;
+	}
+	
+	string get_comments_post(string uri)
+	{
+		array(string) post = uri / "/";
+		string response = "";
+		
+		if(sizeof(post) > 3) //make sure theres a path to a post
+		{
+			string key = db_prefix + "post:" + current_subgreenit(uri) + ":" + post[4];
+			
+			if(db->exists(key))
+			{
+				string body = decorrupt(db->hget(key, "body"));
+				
+				if(strlen(body) < 1)
+					response += "<div class=\"flair\">" + "Title only" + "</div>";
+				
+				response += "<h1>" + safe_title_display_string(db->hget(key, "title")) + "</h1><div class=\"above_post\">";
+				response += "<h3>Net votes: " + ((int)db->hget(key, "upvotes") - (int)db->hget(key, "downvotes")) + "</h3>";
+				response += "<iframe class=\"uv_dv\" src=\"/action/upvote?c=" + replace(post[4], "\r", "") +"&g=" + current_subgreenit(uri) + "\"></iframe><br>";
+				response += "<iframe class=\"uv_dv\" src=\"/action/downvote?c=" + replace(post[4], "\r", "") +"&g=" + current_subgreenit(uri) + "\"></iframe><br>";
+				response += "</div><div class=\"post\">Posted by " + db->hget(key, "creator") + "<div class=\"post_content\">" + format_parse(db->hget(key, "body")) + "</div>" + db->hget(key, "post_date") + "</div>";
+			}
+			else
+				response = "post does not exist";
+				
+		}
+		else
+			response = "post retrieval error";
+		
+		return response;
+	}
+	
+	string get_comments(string uri, string post, string token)
+	{
+		string post_key = db_prefix + "post:" + current_subgreenit(uri) + ":" + post;
+		string final_str = "", comm_str;
+		array(string) path_parts = uri / "/";
+		
+		if(user_logged_in(token) && sizeof(path_parts) < 7)
+			final_str += "<h2>reply</h2>" + get_create_reply_form(current_subgreenit(uri), post, "") + "<br><br>";
+		
+		
+		//TODO work with reply stuff. Need to parse out the reply path with ids
+		
+		if(sizeof(path_parts) >= 4)
+			comm_str = create_comments(post_key, 0, path_parts[5], 0);
+		else
+			comm_str = create_comments(post_key, 0, "", 0);
+		
+		
+		if(comm_str)
+			final_str += comm_str;
+		else
+			final_str += "no comments";
+		
+		
+		return final_str;
+	}
+	
+	string create_comments(string post_key, string parent_id, string reply_path, int level)
+	{
+		//string comm_key_root = post_key + ":comment:"; //takes the id. Wont ever be recursively named
+		string comm_list_key_root = post_key + ":replies"; //needs the id of the comment to get its replies. This is a list. NOTE WILL BE THE ROOT POST IF NO :id
+		string final_str = "";
+		array(string) key_parts = comm_list_key_root / ":";
+		string comment_part_0 = "<div class = \"comment_", comment_part_1 = "\">", comment_part_2 = "<br><a href=\"/g/" + key_parts[2] + "/comments/" + key_parts[3] + "/", comment_part_3 = "/\">reply</a>", comment_part_4 = "</div>";
+		
+		
+		
+		
+		
+		array(string) comments;
+		int replies;
+		
+		//recursively create comments
+		
+		//detect if this isnt the root level. Will need to add onto the key if so
+		if(parent_id)
+		{
+			//append the id to the end whenever applicable so its in the non root mode
+			comm_list_key_root += ":" + parent_id;
+		}
+		
+		
+		
+		//determine if comment has replies, and if not, add the /div to make a list instead
+		
+		replies = db->llen(comm_list_key_root);
+		
+		
+		if(!replies)
+			return 0;
+		
+		comments = db->lrange(comm_list_key_root, 0, -1);
+		
+		foreach(comments, string comment)
+		{
+			comment = decorrupt(comment);
+			string author = remove_crlf(db->hget(comment, "author"));
+			string body = remove_crlf(db->hget(comment, "comment"));
+			string id = remove_crlf(db->hget(comment, "id"));
+			string replies = create_comments(post_key, id, reply_path, level + 1);
+			
+			if(!db->hget(comment, "deleted"))
+			{
+				final_str += comment_part_0 + (level % 2);
+				final_str += comment_part_1 + "<b>" + author + "</b><br><br>" + body + comment_part_2;
+				final_str += id + comment_part_3;
+				
+				//write("current status %s %s --------------- |%s| |%s| %d %d\n", post_key, (string)parent_id, id, reply_path, strlen(id), strlen(reply_path));
+				//if replying to this comment, draw the reply box
+				//write(" mmm %s\n", id);
+				if(!parent_id && reply_path == id) //if this is the level after the root level
+				{
+					final_str += get_create_reply_form(key_parts[2], key_parts[3], id);
+				}
+				else if(reply_path == id) //any level after the levelk after root
+				{
+					final_str += get_create_reply_form(key_parts[2], key_parts[3], id);
+				}
+				
+				if(replies)
+					final_str += replies;
+				
+				final_str += comment_part_4;
+				
+			}
+			
+			
+		}
+		
+		
+		return final_str;
+	}
+	
+	string get_create_reply_form(string subgreenit, string post, string id_path)
+	{
+		string form = "\n\
+		<form action=\"/g/" + subgreenit + "/comments/" + post + "/\" method=\"post\">\n\
+			<input type=\"hidden\" value=\"" + id_path + "\" name=\"id_path\">\n\
+			<textarea name=\"body\" cols=\"80\" rows=\"14\"></textarea><br><br>\n\
+			<input type=\"submit\" value=\"submit\" id=\"submit\">\n\
+		</form>";
+		
+		return form;
+	}
+	
+	string create_post_element(string key)
+	{
+		array(string) temp = key / ":";
+		
+		//the key is corrupted for whatever reason
+		string fixed_key = temp[0] +":" + temp[1] + ":" + temp[2] + ":" + replace(temp[3], "\r", "");
+		string body = decorrupt(db->hget(fixed_key, "body"));
+		
+		//write("hey \"%s\"\n", fixed_key);
+		
+		/*
+		return "\n\
+		<div class=\"feed_object\">\n\
+			<div class=\"feed_object_updn_container\">(" + db->hget(fixed_key, "upvotes") + ") upvote<br>(" + db->hget(fixed_key, "downvotes")  + ") downvote</div><div class=\"feed_object_title_container\"><a href=\"" + "/g/" + db->hget(fixed_key, "parent") + "/comments/" + temp[3] + "\">" + db->hget(fixed_key, "title") + "</a></div>\n\
+		</div>";
+		*/
+		return "\n\
+		<div class=\"feed_object\">\n\
+			<div class=\"feed_object_updn_container\">(" + ((int)db->hget(fixed_key, "upvotes") - (int)db->hget(fixed_key, "downvotes")) + ")<hr></hr><iframe class=\"uv_dv\" src=\"/action/upvote?c=" + replace(temp[3], "\r", "") +"&g=" + temp[2] + "\"></iframe><br><iframe class=\"uv_dv\" src=\"/action/downvote?c=" + replace(temp[3], "\r", "") +"&g=" + temp[2] + "\"></iframe><br></div><div class=\"feed_object_title_container\"><a href=\"" + "/g/" + db->hget(fixed_key, "parent") + "/comments/" + temp[3] + "/\"><h2>" + safe_title_display_string(db->hget(fixed_key, "title")) + "</h2></a></div>\n\
+			" + (strlen(body) ? "" : "<br><div class=\"flair\">" + "Title only" + "</div>") + "\n\
+		</div>";
+	}
+	
+	string unformat_title(string title)
+	{
+		array(string) temp = title / "_";
+		
+		return temp * " ";
+	}
+	
+	string assemble_nav_controls(string prevpage_link, string nextpage_link, int current_page, int maxpages)
+	{
+		string nav = "";
+		
+		
+		if(!maxpages)
+			return "<br><center>only page</center><br>";
+		
+		nav += "<br><center>";
+		
+		if(current_page > 0)
+			nav += "<a href=\"" + prevpage_link + "\" >&ltprevious|</a>";
+		
+		nav +=  current_page + "/" + maxpages;
+		
+		if(current_page < maxpages)
+			nav +=  "<a href=\"" + nextpage_link + "\" >|next&gt</a>";
+		
+		nav += "</center><br>";
+		
+		return nav;
+	}
+	
+	string generate_nav(string pre_uri)
+	{
+		string uri;
+		
+		if(pre_uri == "/")
+			uri = "/g/" + db->get(db_prefix + "variable:setup") + "/";
+		else
+			uri = pre_uri;
+			
+		
+		//=========================
+		
+		array(string) sub_uri = trim_uri(uri) / "/";
+		int page = 0, other = 0, abort = 0, total, ppp, maxpages;
+		string sub_path = "";
+		
+		//=======================
+		
+		if(!subgreenit_exists(uri))
+		{
+			return "<br><center>no pages</center><br>";
+		}
+		
+		
+		total = db->llen(db_prefix + "variable:" +current_subgreenit(uri)  + ":posts");
+		ppp = (int)db->get(db_prefix + "variable:ppp");
+		
+		if(!total)
+			maxpages = 0;
+		else
+			maxpages = (total / ppp);
+		
+		
+		if(sizeof(sub_uri) > 2)
+			sub_path += sub_uri[3];
+		
+		if(sizeof(sub_path))
+		{
+			if(sub_path[0] == 'p' && sub_path[1] != 'o') //its the home page
+			{
+				string temp = sub_path[1..];
+				page = (int)temp;
+			}
+			else if(sub_path == "comments" || sub_path == "create" || sub_path == "css")
+				abort = 1;
+			else //its any other
+			{
+				if(sub_uri[4])
+				{
+					other++;
+					string temp = sub_uri[4][1..];
+					page = (int)temp;
+				}
+			}
+		}
+		
+		if(abort)
+			return "";
+		
+		//spit out a navigation string
+		string base = "/g/" + sub_uri[2] + "/";
+		
+		if(other)
+			base += sub_uri[3] + "/p";
+		else
+			base += "p";
+		
+		string prev = base + (page - 1) + "/";
+		string next = base + (page + 1) + "/";
+		
+		
+		return assemble_nav_controls(prev, next, page, maxpages);
+	}
+	
+	
+	string current_subgreenit(string query)
+	{
+		array(string) path = query / "/";
+		
+		if(query == "/")
+			return "all";
+		else if(path[1] != "g")
+			return "";
+		
+		if(query != "/")
+		{
+			if(path[2])
+				return path[2];
+			else
+				return "";
+			
+		}
+		
+		return "";
+	}
+	
+	string banner_current_subgreenit(string query)
+	{
+		if(query && strlen(current_subgreenit(query)))
+			return "g/" + current_subgreenit(query);
+		
+		return "";
+	}
+	
+	int in_subgreenit(string query)
+	{
+		return db->exists(db_prefix + "subgreenit:" + current_subgreenit(query));
+	}
+	
+	string get_create_form(string subgreenit)
+	{
+		string form = "\n\
+		<form action=\"/g/" + subgreenit + "/create/\" method=\"post\">\n\
+			Title:<br>\n\
+			<input type=\"text\" name=\"title\"><br>\n\
+			Body:<br>\n\
+			<textarea name=\"body\" cols=\"80\" rows=\"20\"></textarea><br><br>\n\
+			<input type=\"submit\" value=\"submit\" id=\"submit\">\n\
+		</form>";
+		
+		return form;
+	}
+	
+	int is_clean_title_string(string title)
+	{
+		if(strlen(title) > 50 || strlen(title) < 2)
+			return 0;
+		
+		for(int i = 0; i < strlen(title); i++)//make sure only alpha
+		{
+			if((title[i] < 32 || title[i] > 126 || title[i] == 95))
+				return 0;
+		}
+		
+		return 1;
+	}
+	
+	int is_clean_username_string(string title)
+	{
+		
+		for(int i = 0; i < strlen(title); i++)//make sure only alphanumeric
+		{
+			if((title[i] < 48 || title[i] > 57) && (title[i] < 65 || title[i] > 90) && (title[i] < 97 || title[i] > 122))
+				return 0;
+		}
+		
+		return 1;
+	}
+	
+	int subgreenit_exists(string uri)
+	{
+		string key = db_prefix + "subgreenit:" + current_subgreenit(uri);
+		
+		return db->exists(key);
+	}
+	
+	string safe_title_string(string title)
+	{
+		string final_str, finalized = "";
+		array(string) temp;
+		
+		temp = title / " ";
+		
+		final_str = temp * "_";
+		
+		temp = final_str / "<";
+		
+		final_str = temp * "&lt";
+		
+		temp = final_str / ">";
+		
+		final_str = temp * "&gt";
+		
+		temp = final_str / "%";
+		
+		final_str = temp * "";
+		
+		for(int i = 0; i < strlen(final_str); i++)
+		{
+			if((final_str[i] >= 65 && final_str[i] <= 90) || (final_str[i] >= 97 && final_str[i] <= 122) || final_str[i] == 95)
+			{
+				finalized += final_str[i..i];
+			}
+		}
+		
+		return finalized;
+	}
+	
+	string safe_about_string(string about)
+	{
+		string final_str;
+		array(string) temp;
+		
+		temp = about / "<";
+		
+		final_str = temp * "&lt";
+		
+		temp = final_str / ">";
+		
+		final_str = temp * "&gt";
+		
+		temp = final_str / "\n";
+		
+		final_str = temp * "<br>";
+		
+		return final_str;
+	}
+	
+	string safe_title_display_string(string about)
+	{
+		string final_str;
+		array(string) temp;
+		
+		temp = about / "<";
+		
+		final_str = temp * "&lt";
+		
+		temp = final_str / ">";
+		
+		final_str = temp * "&gt";
+		
+		temp = final_str / "\n";
+		
+		final_str = temp * "";
+		
+		return final_str;
+	}
+	
+	string safe_css_string(string input) //this is not bulletproof and I know it isnt
+	{
+		string final_str;
+		array(string) temp;
+		
+		temp = input / "<";
+		
+		final_str = temp * "&lt";
+		
+		temp = final_str / ">";
+		
+		final_str = temp * "&gt";
+		
+		//search for url() places and only allow it to be used if the link is imgur. Change resource to /img_res/invalid.png if not
+		
+		for(int i = 0; i < strlen(final_str); i++)
+		{
+			if(final_str[i..i + strlen("url(") - 1] == "url(")
+			{
+				
+				if(search(final_str[i + strlen("url(")..], ")") < 2) //make sure it finds the closing parenthesees
+					return "error";
+				
+				string url = final_str[i + strlen("url(")..i + strlen("url(") + search(final_str[i + strlen("url(")..], ")") - 1];
+				string url_full = final_str[i..i + strlen("url(") + search(final_str[i + strlen("url(")..], ")")];
+				
+				//write("url |%s|, |%s|\n", url, url[0..strlen("https://i.imgur.com/")]);
+				
+				//test and make sure it's imgur only
+				
+				if(url[0..strlen("https://i.imgur.com/") - 1] != "https://i.imgur.com/" && url[0..strlen("http://i.imgur.com/") - 1] != "http://i.imgur.com/")
+				{
+					array(string) temp_data = final_str / url;
+					//write("not good %s\n", url_full);
+					final_str = temp_data * "/img_res/invalid.png";
+				}
+			}
+		}
+		
+		
+		
+		return final_str;
+	}
+	
+	string format_parse(string input)
+	{
+		string final_str = input;
+		array(string) temp;
+		int img_esc = 0, video_esc = 0, url_esc = 0, bold_esc = 0, ital_esc = 0, under_esc = 0;
+		
+		
+		
+		//strip out html
+		
+		temp = final_str / "<";
+		
+		final_str = temp * "&lt";
+		
+		temp = final_str / ">";
+		
+		final_str = temp * "&gt";
+		
+		//control formats
+		
+		//imgur images
+		
+		array(string) img_open = final_str / "[img]";
+		array(string) img_close = final_str / "[/img]";
+		
+		if(sizeof(img_open) == sizeof(img_close))
+		{
+			final_str = img_open * "<img style=\"\width: 100%;\" src=\"https://i.imgur.com/";
+			array(string) img_close2 = final_str / "[/img]";
+			final_str = img_close2 * "\"/>";
+		}
+		
+		//youtube videos
+		
+		array(string) vid_open = final_str / "[video]";
+		array(string) vid_close = final_str / "[/video]";
+		
+		if(sizeof(vid_open) == sizeof(vid_close))
+		{
+			final_str = vid_open * "<iframe style=\"\width: 94%; height: 400px;\" src=\"https://www.youtube.com/embed/";
+			array(string) vid_close2 = final_str / "[/video]";
+			final_str = vid_close2 * "\"></iframe>";
+		}
+		
+		//links
+		
+		array(string) url_open = final_str / "[url]";
+		array(string) url_close = final_str / "[/url]";
+		
+		if(sizeof(url_open) == sizeof(url_close))
+		{
+			final_str = url_open * "<a href=\"";
+			array(string) vid_close2 = final_str / "[/url]";
+			final_str = vid_close2 * "\">link</a>";
+		}
+		
+		//bold
+		
+		array(string) bold_open = final_str / "[b]";
+		array(string) bold_close = final_str / "[/b]";
+		
+		if(sizeof(bold_open) == sizeof(bold_close))
+		{
+			final_str = bold_open * "<b>";
+			array(string) bold_close2 = final_str / "[/b]";
+			final_str = bold_close2 * "</b>";
+		}
+		
+		//italics
+		
+		array(string) italics_open = final_str / "[i]";
+		array(string) italics_close = final_str / "[/i]";
+		
+		if(sizeof(italics_open) == sizeof(italics_close))
+		{
+			final_str = italics_open * "<i>";
+			array(string) italics_close2 = final_str / "[/i]";
+			final_str = italics_close2 * "</i>";
+		}
+		
+		//underline
+		
+		array(string) under_open = final_str / "[u]";
+		array(string) under_close = final_str / "[/u]";
+		
+		if(sizeof(under_open) == sizeof(under_close))
+		{
+			final_str = under_open * "<u>";
+			array(string) under_close2 = final_str / "[/u]";
+			final_str = under_close2 * "</u>";
+		}
+		
+		
+		
+		
+		//finally, modify all newlines
+		temp = final_str / "\n";
+		
+		final_str = temp * "<br>";
+		
+		return final_str;
+	}
+	
+	int user_is_moderator(string cookie_token, string uri)
+	{
+		string key = db_prefix + "variable:" + current_subgreenit(uri) + ":moderators";
+		
+		array(string) moderators = db->lrange(key, 0, -1);
+		
+		foreach(moderators, string user)
+		{
+			string data = decorrupt(user);
+			
+			if(data == username_from_token(cookie_token))
+				return 1;
+		}
+		return 0;
+	}
+	
+	int user_is_admin(string cookie_token)//request->cookies->token
+	{
+		//check if the user is an admin
+		foreach(db->lrange(db_prefix + "variable:admins", 0, -1), string key)
+		{
+			array(string) key_data = replace(key, "\r", "") / ":";
+			
+			
+			if(key_data[2] == username_from_token(cookie_token))
+				return 1;
+		}
+		return 0;
+	}
+	
+	int user_name_is_moderator(string username, string uri)
+	{
+		string key = db_prefix + "variable:" + current_subgreenit(uri) + ":moderators";
+		
+		array(string) moderators = db->lrange(key, 0, -1);
+		
+		foreach(moderators, string user)
+		{
+			string data = decorrupt(user);
+			
+			if(data == username)
+				return 1;
+		}
+		return 0;
+	}
+	
+	int user_name_is_admin(string username)
+	{
+		//check if the user is an admin
+		foreach(db->lrange(db_prefix + "variable:admins", 0, -1), string key)
+		{
+			array(string) key_data = replace(key, "\r", "") / ":";
+			
+			
+			if(key_data[2] == username)
+				return 1;
+		}
+		return 0;
+	}
+	
+%>
